@@ -5,11 +5,13 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import LandingScreen from '../screens/LandingScreen';
 import SplitResultScreen from '../screens/SplitResultScreen';
 import FinalSplitScreen from '../screens/FinalSplitScreen';
+import RequestConfirmedScreen from '../screens/RequestConfirmedScreen';
 
 export type RootStackParamList = {
   Landing: undefined;
   SplitResult: { imageUri: string };
   FinalSplit: undefined;
+  RequestConfirmed: undefined;
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -22,7 +24,7 @@ const AppNavigator = () => {
         initialRouteName="Landing"
         screenOptions={{
           headerStyle: {
-            backgroundColor: '#FF6B6B',
+            backgroundColor: '#E85555',
           },
           headerTintColor: '#fff',
           headerTitleStyle: {
@@ -44,6 +46,11 @@ const AppNavigator = () => {
           name="FinalSplit"
           component={FinalSplitScreen}
           options={{ title: 'Split Results' }}
+        />
+        <Stack.Screen
+          name="RequestConfirmed"
+          component={RequestConfirmedScreen}
+          options={{ headerShown: false }}
         />
       </Stack.Navigator>
     </NavigationContainer>

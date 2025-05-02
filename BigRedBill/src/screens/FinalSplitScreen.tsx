@@ -1,139 +1,198 @@
-import React, { useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Modal } from 'react-native';
-import { useNavigation } from '@react-navigation/native';
-import { RootStackParamList } from '../navigation/AppNavigator';
-import { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import React, { useState, useRef } from 'react';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Modal, Dimensions } from 'react-native';
+import { formatCurrency } from '../utils/ocr';
 import { useBillSplit } from '../context/BillSplitContext';
+import { useRawBillData } from '../context/RawBillDataContext';
+import { useNavigation } from '@react-navigation/native';
+import { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { RootStackParamList } from '../navigation/AppNavigator';
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 
-interface PaymentMethod {
-  id: string;
-  name: string;
-  icon: string;
-}
-
-const paymentMethods: PaymentMethod[] = [
-  { id: 'venmo', name: 'Venmo', icon: '💸' },
-  { id: 'paypal', name: 'PayPal', icon: '💰' },
-  { id: 'cash', name: 'Cash', icon: '💵' },
-  { id: 'bank', name: 'Bank Transfer', icon: '🏦' },
+const PAYMENT_METHODS = [
+  { label: 'Select Method', value: '' },
+  { label: 'Venmo', value: 'venmo' },
+  { label: 'Cash', value: 'cash' },
+  { label: 'Zelle', value: 'zelle' },
+  { label: 'PayPal', value: 'paypal' }
 ];
 
 const FinalSplitScreen = () => {
-  const navigation = useNavigation<NavigationProp>();
+  const { rawBillData } = useRawBillData();
   const { receiver, items, payers } = useBillSplit();
-  const [selectedMethod, setSelectedMethod] = useState<PaymentMethod | null>(null);
-  const [showMethodModal, setShowMethodModal] = useState(false);
+  const [expandedPayers, setExpandedPayers] = useState<{ [key: string]: boolean }>({});
+  const [selectedPaymentMethods, setSelectedPaymentMethods] = useState<{ [key: string]: string }>({});
+  const [showPicker, setShowPicker] = useState<string | null>(null);
+  const [pickerPosition, setPickerPosition] = useState({ top: 0, left: 0, width: 0 });
+  const navigation = useNavigation<NavigationProp>();
 
-  // Calculate total amount for each payer
-  const payerTotals = payers.reduce((acc, payer) => {
-    const total = items.reduce((sum, item) => {
+  if (!receiver || !items || !payers) {
+    return (
+      <View style={styles.container}>
+        <Text>No bill data available</Text>
+      </View>
+    );
+  }
+
+  const calculatePayerTotal = (payer: string) => {
+    return items.reduce((total, item) => {
       if (item.payers.includes(payer)) {
-        return sum + item.price;
+        return total + (item.price * item.quantity);
       }
-      return sum;
+      return total;
     }, 0);
-    acc[payer] = total;
-    return acc;
-  }, {} as Record<string, number>);
+  };
 
-  // Calculate total amount for receiver
-  const receiverTotal = Object.values(payerTotals).reduce((sum, amount) => sum + amount, 0);
+  const togglePayerExpanded = (payer: string) => {
+    setExpandedPayers(prev => ({
+      ...prev,
+      [payer]: !prev[payer]
+    }));
+  };
+
+  const handlePaymentMethodChange = (payer: string, method: string) => {
+    setSelectedPaymentMethods(prev => ({
+      ...prev,
+      [payer]: method
+    }));
+    setShowPicker(null);
+  };
 
   const handleConfirmPayment = () => {
     // TODO: Implement payment confirmation logic
-    navigation.navigate('Landing');
+    console.log('Payment methods:', selectedPaymentMethods);
+    navigation.navigate('RequestConfirmed');
+  };
+
+  const handlePaymentMethodPress = (payer: string, event: any) => {
+    event.target.measure((x: number, y: number, width: number, height: number, pageX: number, pageY: number) => {
+      setPickerPosition({
+        top: pageY + height,
+        left: pageX,
+        width: width
+      });
+      setShowPicker(showPicker === payer ? null : payer);
+    });
   };
 
   return (
-    <ScrollView style={styles.container}>
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Receiver</Text>
-        <View style={styles.receiverContainer}>
-          <Text style={styles.receiverName}>{receiver}</Text>
-          <Text style={styles.receiverAmount}>Total: ${receiverTotal.toFixed(2)}</Text>
+    <>
+      <ScrollView style={styles.container}>
+        <View style={styles.header}>
+          <Text style={styles.receiverText}>Receiver: {receiver}</Text>
+          <Text style={styles.totalText}>Total Amount: {formatCurrency(rawBillData.total)}</Text>
         </View>
-      </View>
 
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Payment Method</Text>
-        <TouchableOpacity
-          style={styles.methodButton}
-          onPress={() => setShowMethodModal(true)}
-        >
-          <Text style={styles.methodButtonText}>
-            {selectedMethod ? `${selectedMethod.icon} ${selectedMethod.name}` : 'Select Payment Method'}
-          </Text>
-        </TouchableOpacity>
-      </View>
+        <View style={styles.payersContainer}>
+          {payers.map((payer, index) => {
+            const payerTotal = calculatePayerTotal(payer);
+            const isExpanded = expandedPayers[payer];
 
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Payments Due</Text>
-        {payers.map((payer, index) => (
-          <View key={index} style={styles.payerContainer}>
-            <View style={styles.payerHeader}>
-              <Text style={styles.payerName}>{payer}</Text>
-              <Text style={styles.payerAmount}>${payerTotals[payer].toFixed(2)}</Text>
-            </View>
-            <View style={styles.itemsContainer}>
-              {items
-                .filter(item => item.payers.includes(payer))
-                .map((item, itemIndex) => (
-                  <View key={itemIndex} style={styles.itemRow}>
-                    <Text style={styles.itemName}>{item.name}</Text>
-                    <Text style={styles.itemPrice}>${item.price.toFixed(2)}</Text>
+            return (
+              <View key={index} style={styles.payerCard}>
+                <TouchableOpacity
+                  style={styles.payerHeader}
+                  onPress={() => togglePayerExpanded(payer)}
+                >
+                  <View>
+                    <Text style={styles.payerName}>{payer}</Text>
+                    <Text style={styles.payerTotal}>{formatCurrency(payerTotal)}</Text>
                   </View>
-                ))}
-            </View>
-          </View>
-        ))}
-      </View>
+                  <Text style={styles.expandIcon}>{isExpanded ? '▼' : '▶'}</Text>
+                </TouchableOpacity>
 
-      <TouchableOpacity
-        style={[styles.confirmButton, !selectedMethod && styles.disabledButton]}
-        onPress={handleConfirmPayment}
-        disabled={!selectedMethod}
-      >
-        <Text style={styles.confirmButtonText}>Confirm Payment Request</Text>
-      </TouchableOpacity>
+                {isExpanded && (
+                  <View style={styles.expandedContent}>
+                    <View style={styles.itemsList}>
+                      {items.map((item, itemIndex) => {
+                        if (item.payers.includes(payer)) {
+                          return (
+                            <View key={itemIndex} style={styles.itemRow}>
+                              <Text style={styles.itemName}>
+                                {item.quantity}x {item.name}
+                              </Text>
+                              <Text style={styles.itemPrice}>
+                                {formatCurrency(item.price * item.quantity)}
+                              </Text>
+                            </View>
+                          );
+                        }
+                        return null;
+                      })}
+                    </View>
+
+                    <View style={styles.paymentMethodContainer}>
+                      <Text style={styles.paymentMethodLabel}>Payment Method:</Text>
+                      <TouchableOpacity
+                        style={styles.paymentMethodButton}
+                        onPress={(event) => handlePaymentMethodPress(payer, event)}
+                      >
+                        <Text style={styles.paymentMethodText}>
+                          {PAYMENT_METHODS.find(m => m.value === selectedPaymentMethods[payer])?.label || 'Select Method'}
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                )}
+              </View>
+            );
+          })}
+        </View>
+
+        <TouchableOpacity
+          style={styles.confirmButton}
+          onPress={handleConfirmPayment}
+        >
+          <Text style={styles.confirmButtonText}>Confirm Payment Request</Text>
+        </TouchableOpacity>
+      </ScrollView>
 
       <Modal
-        visible={showMethodModal}
+        visible={showPicker !== null}
         transparent={true}
-        animationType="slide"
-        onRequestClose={() => setShowMethodModal(false)}
+        animationType="none"
+        onRequestClose={() => setShowPicker(null)}
       >
-        <View style={styles.modalContainer}>
-          <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>Select Payment Method</Text>
-            {paymentMethods.map((method) => (
+        <TouchableOpacity
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => setShowPicker(null)}
+        >
+          <View
+            style={[
+              styles.pickerContainer,
+              {
+                position: 'absolute',
+                top: pickerPosition.top,
+                left: pickerPosition.left,
+                width: pickerPosition.width,
+              }
+            ]}
+          >
+            {PAYMENT_METHODS.filter(method => method.value !== '').map((method) => (
               <TouchableOpacity
-                key={method.id}
+                key={method.value}
                 style={[
-                  styles.methodOption,
-                  selectedMethod?.id === method.id && styles.selectedMethod
+                  styles.pickerItem,
+                  selectedPaymentMethods[showPicker || ''] === method.value && styles.pickerItemSelected
                 ]}
                 onPress={() => {
-                  setSelectedMethod(method);
-                  setShowMethodModal(false);
+                  handlePaymentMethodChange(showPicker || '', method.value);
+                  setShowPicker(null);
                 }}
               >
-                <Text style={styles.methodText}>
-                  {method.icon} {method.name}
+                <Text style={[
+                  styles.pickerItemText,
+                  selectedPaymentMethods[showPicker || ''] === method.value && styles.pickerItemTextSelected
+                ]}>
+                  {method.label}
                 </Text>
               </TouchableOpacity>
             ))}
-            <TouchableOpacity
-              style={styles.closeButton}
-              onPress={() => setShowMethodModal(false)}
-            >
-              <Text style={styles.closeButtonText}>Close</Text>
-            </TouchableOpacity>
           </View>
-        </View>
+        </TouchableOpacity>
       </Modal>
-    </ScrollView>
+    </>
   );
 };
 
@@ -141,139 +200,135 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#fff',
-    padding: 20,
+    padding: 16,
   },
-  section: {
-    marginBottom: 30,
+  header: {
+    marginBottom: 24,
+    padding: 16,
+    backgroundColor: '#f8f8f8',
+    borderRadius: 8,
   },
-  sectionTitle: {
+  receiverText: {
     fontSize: 20,
     fontWeight: 'bold',
-    marginBottom: 15,
-    color: '#333',
+    marginBottom: 8,
   },
-  receiverContainer: {
-    backgroundColor: '#f8f8f8',
-    padding: 15,
-    borderRadius: 10,
-  },
-  receiverName: {
+  totalText: {
     fontSize: 18,
-    fontWeight: 'bold',
-    color: '#333',
-    marginBottom: 5,
+    color: '#666',
   },
-  receiverAmount: {
-    fontSize: 16,
-    color: '#FF6B6B',
-    fontWeight: 'bold',
+  payersContainer: {
+    marginBottom: 24,
   },
-  methodButton: {
-    backgroundColor: '#f0f0f0',
-    padding: 15,
-    borderRadius: 10,
-    alignItems: 'center',
-  },
-  methodButtonText: {
-    fontSize: 16,
-    color: '#333',
-  },
-  payerContainer: {
-    backgroundColor: '#f8f8f8',
-    padding: 15,
-    borderRadius: 10,
-    marginBottom: 15,
+  payerCard: {
+    backgroundColor: '#fff',
+    borderRadius: 8,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#eee',
+    zIndex: 1,
   },
   payerHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginBottom: 10,
+    alignItems: 'center',
+    padding: 16,
   },
   payerName: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#333',
+    fontSize: 18,
+    fontWeight: '500',
   },
-  payerAmount: {
+  payerTotal: {
     fontSize: 16,
-    color: '#FF6B6B',
-    fontWeight: 'bold',
+    color: '#666',
+    marginTop: 4,
   },
-  itemsContainer: {
+  expandIcon: {
+    fontSize: 16,
+    color: '#666',
+  },
+  expandedContent: {
+    padding: 16,
     borderTopWidth: 1,
     borderTopColor: '#eee',
-    paddingTop: 10,
+    position: 'relative',
+    zIndex: 2,
+  },
+  itemsList: {
+    marginBottom: 16,
   },
   itemRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginBottom: 5,
+    marginBottom: 8,
   },
   itemName: {
     fontSize: 14,
-    color: '#666',
+    color: '#333',
   },
   itemPrice: {
     fontSize: 14,
     color: '#666',
   },
-  confirmButton: {
-    backgroundColor: '#FF6B6B',
-    padding: 15,
-    borderRadius: 10,
-    marginTop: 20,
+  paymentMethodContainer: {
+    marginTop: 16,
+    position: 'relative',
+    zIndex: 3,
   },
-  disabledButton: {
-    backgroundColor: '#ccc',
+  paymentMethodLabel: {
+    fontSize: 16,
+    marginBottom: 8,
+  },
+  paymentMethodButton: {
+    borderWidth: 1,
+    borderColor: '#ddd',
+    padding: 12,
+    borderRadius: 4,
+  },
+  paymentMethodText: {
+    fontSize: 16,
+  },
+  confirmButton: {
+    backgroundColor: '#E85555',
+    padding: 16,
+    borderRadius: 8,
+    alignItems: 'center',
+    marginBottom: 24,
   },
   confirmButtonText: {
     color: '#fff',
-    textAlign: 'center',
     fontSize: 18,
     fontWeight: 'bold',
   },
-  modalContainer: {
+  modalOverlay: {
     flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    backgroundColor: 'rgba(0,0,0,0.1)',
   },
-  modalContent: {
+  pickerContainer: {
     backgroundColor: '#fff',
-    borderRadius: 10,
-    padding: 20,
-    width: '80%',
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 4,
+    elevation: 5,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.84,
   },
-  modalTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    marginBottom: 20,
-    textAlign: 'center',
-  },
-  methodOption: {
-    padding: 15,
+  pickerItem: {
+    padding: 12,
     borderBottomWidth: 1,
     borderBottomColor: '#eee',
   },
-  selectedMethod: {
+  pickerItemText: {
+    fontSize: 16,
+  },
+  pickerItemSelected: {
     backgroundColor: '#f0f0f0',
   },
-  methodText: {
-    fontSize: 16,
-    color: '#333',
-  },
-  closeButton: {
-    marginTop: 20,
-    padding: 15,
-    backgroundColor: '#FF6B6B',
-    borderRadius: 10,
-  },
-  closeButtonText: {
-    color: '#fff',
-    textAlign: 'center',
-    fontSize: 16,
+  pickerItemTextSelected: {
     fontWeight: 'bold',
   },
 });
 
-export default FinalSplitScreen; 
+export default FinalSplitScreen;

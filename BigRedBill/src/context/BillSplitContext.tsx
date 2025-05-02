@@ -1,9 +1,10 @@
 import React, { createContext, useContext, useState, ReactNode } from 'react';
 
-interface BillItem {
+export interface BillItem {
   name: string;
   price: number;
   payers: string[];
+  quantity: number;
 }
 
 interface BillSplitContextType {

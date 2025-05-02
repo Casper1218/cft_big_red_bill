@@ -5,22 +5,23 @@ import { RootStackParamList } from '../navigation/AppNavigator';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useBillSplit } from '../context/BillSplitContext';
 import { performOCR } from '../utils/ocr';
-
+import { useRawBillData } from '../context/RawBillDataContext';
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 
 interface Item {
   name: string;
   price: number;
   payers: string[];
+  quantity: number;
 }
 
 const SplitResultScreen = () => {
   const route = useRoute();
   const navigation = useNavigation<NavigationProp>();
   const { imageUri } = route.params as { imageUri: string };
-  const { setBillSplit } = useBillSplit();
+  const { receiver: contextReceiver, items: contextItems, payers: contextPayers, setBillSplit } = useBillSplit();
+  const { setBillData } = useRawBillData();
   const [isLoading, setIsLoading] = useState(true);
-  const [ocrResults, setOcrResults] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   // Mock data for friends
@@ -37,21 +38,23 @@ const SplitResultScreen = () => {
 
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearchFocused, setIsSearchFocused] = useState(true);
-  const [receiver, setReceiver] = useState<string>('');
-  const [payers, setPayers] = useState<string[]>([]);
-  const [items, setItems] = useState<Item[]>([]);
+  const [receiver, setReceiver] = useState<string>(contextReceiver);
+  const [payers, setPayers] = useState<string[]>(contextPayers);
+  const [items, setItems] = useState<Item[]>(contextItems);
 
   useEffect(() => {
     const processImage = async () => {
       try {
         setIsLoading(true);
-        const results = await performOCR(imageUri);
-        const texts = results.map(result => result.text);
-        setOcrResults(texts);
+        const resultsBill = await performOCR(imageUri);
+        setBillData(resultsBill);
 
         // Process OCR results to extract items and prices
-        const extractedItems = extractItemsFromOCR(texts);
-        setItems(extractedItems);
+        // const extractedItems = extractItemsFromOCR(texts);
+        console.log('Extracted Items:', resultsBill.items);
+        setItems(resultsBill.items);
+        setBillSplit(receiver, resultsBill.items, payers);
+
       } catch (err) {
         setError('Failed to process image. Please try again.');
         console.error('OCR Processing Error:', err);
@@ -64,7 +67,6 @@ const SplitResultScreen = () => {
   }, [imageUri]);
 
   const extractItemsFromOCR = (texts: string[]): Item[] => {
-    // This is a simple implementation - you might want to make it more robust
     const items: Item[] = [];
     const priceRegex = /\$?\d+\.\d{2}/;
 
@@ -79,7 +81,8 @@ const SplitResultScreen = () => {
             items.push({
               name,
               price,
-              payers: []
+              payers: [],
+              quantity: 1
             });
           }
         }
@@ -97,14 +100,15 @@ const SplitResultScreen = () => {
     setReceiver(friend);
     setSearchQuery('');
     setIsSearchFocused(false);
+    setBillSplit(friend, items, payers);
   };
 
   const handleSelectPayer = (friend: string) => {
-    if (payers.includes(friend)) {
-      setPayers(payers.filter(p => p !== friend));
-    } else {
-      setPayers([...payers, friend]);
-    }
+    const newPayers = payers.includes(friend)
+      ? payers.filter(p => p !== friend)
+      : [...payers, friend];
+    setPayers(newPayers);
+    setBillSplit(receiver, items, newPayers);
   };
 
   const handleAssignItem = (itemIndex: number, payer: string) => {
@@ -118,6 +122,7 @@ const SplitResultScreen = () => {
     }
 
     setItems(newItems);
+    setBillSplit(receiver, newItems, payers);
   };
 
   const handleConfirm = () => {
