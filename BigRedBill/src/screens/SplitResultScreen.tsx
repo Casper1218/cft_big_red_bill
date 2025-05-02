@@ -1,98 +1,258 @@
-import React, { useState } from 'react';
-import { View, Text, StyleSheet, Image, ScrollView, TouchableOpacity } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { View, Text, StyleSheet, Image, ScrollView, TouchableOpacity, TextInput, ActivityIndicator } from 'react-native';
 import { useRoute, useNavigation } from '@react-navigation/native';
 import { RootStackParamList } from '../navigation/AppNavigator';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { useBillSplit } from '../context/BillSplitContext';
+import { performOCR } from '../utils/ocr';
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 
 interface Item {
   name: string;
   price: number;
-  assignedTo: string[];
+  payers: string[];
 }
 
 const SplitResultScreen = () => {
   const route = useRoute();
   const navigation = useNavigation<NavigationProp>();
   const { imageUri } = route.params as { imageUri: string };
+  const { setBillSplit } = useBillSplit();
+  const [isLoading, setIsLoading] = useState(true);
+  const [ocrResults, setOcrResults] = useState<string[]>([]);
+  const [error, setError] = useState<string | null>(null);
 
-  const [items, setItems] = useState<Item[]>([
-    { name: 'Item 1', price: 10.99, assignedTo: [] },
-    { name: 'Item 2', price: 15.99, assignedTo: [] },
-    { name: 'Item 3', price: 8.99, assignedTo: [] },
-  ]);
+  // Mock data for friends
+  const allFriends = [
+    'John Doe',
+    'Jane Smith',
+    'Mike Johnson',
+    'Sarah Williams',
+    'David Brown',
+    'Emily Davis',
+    'Robert Wilson',
+    'Lisa Anderson'
+  ];
 
-  const [people, setPeople] = useState<string[]>(['Person 1', 'Person 2', 'Person 3']);
-  const [selectedPayer, setSelectedPayer] = useState<string>('');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [isSearchFocused, setIsSearchFocused] = useState(true);
+  const [receiver, setReceiver] = useState<string>('');
+  const [payers, setPayers] = useState<string[]>([]);
+  const [items, setItems] = useState<Item[]>([]);
 
-  const handleAssignItem = (itemIndex: number, person: string) => {
+  useEffect(() => {
+    const processImage = async () => {
+      try {
+        setIsLoading(true);
+        const results = await performOCR(imageUri);
+        const texts = results.map(result => result.text);
+        setOcrResults(texts);
+
+        // Process OCR results to extract items and prices
+        const extractedItems = extractItemsFromOCR(texts);
+        setItems(extractedItems);
+      } catch (err) {
+        setError('Failed to process image. Please try again.');
+        console.error('OCR Processing Error:', err);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    processImage();
+  }, [imageUri]);
+
+  const extractItemsFromOCR = (texts: string[]): Item[] => {
+    // This is a simple implementation - you might want to make it more robust
+    const items: Item[] = [];
+    const priceRegex = /\$?\d+\.\d{2}/;
+
+    texts.forEach(text => {
+      const lines = text.split('\n');
+      lines.forEach(line => {
+        const priceMatch = line.match(priceRegex);
+        if (priceMatch) {
+          const price = parseFloat(priceMatch[0].replace('$', ''));
+          const name = line.replace(priceMatch[0], '').trim();
+          if (name && price) {
+            items.push({
+              name,
+              price,
+              payers: []
+            });
+          }
+        }
+      });
+    });
+
+    return items;
+  };
+
+  const filteredFriends = allFriends.filter(friend =>
+    friend.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
+  const handleSelectReceiver = (friend: string) => {
+    setReceiver(friend);
+    setSearchQuery('');
+    setIsSearchFocused(false);
+  };
+
+  const handleSelectPayer = (friend: string) => {
+    if (payers.includes(friend)) {
+      setPayers(payers.filter(p => p !== friend));
+    } else {
+      setPayers([...payers, friend]);
+    }
+  };
+
+  const handleAssignItem = (itemIndex: number, payer: string) => {
     const newItems = [...items];
     const item = newItems[itemIndex];
 
-    if (item.assignedTo.includes(person)) {
-      item.assignedTo = item.assignedTo.filter(p => p !== person);
+    if (item.payers.includes(payer)) {
+      item.payers = item.payers.filter(p => p !== payer);
     } else {
-      item.assignedTo.push(person);
+      item.payers.push(payer);
     }
 
     setItems(newItems);
   };
 
   const handleConfirm = () => {
-    // TODO: Calculate final split and navigate to results
+    setBillSplit(receiver, items, payers);
     navigation.navigate('FinalSplit');
   };
+
+  if (isLoading) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color="#FF6B6B" />
+        <Text style={styles.loadingText}>Processing bill image...</Text>
+      </View>
+    );
+  }
+
+  if (error) {
+    return (
+      <View style={styles.errorContainer}>
+        <Text style={styles.errorText}>{error}</Text>
+        <TouchableOpacity style={styles.retryButton} onPress={() => navigation.goBack()}>
+          <Text style={styles.retryButtonText}>Try Again</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
 
   return (
     <ScrollView style={styles.container}>
       <Image source={{ uri: imageUri }} style={styles.image} />
 
       <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Select Payer</Text>
-        <View style={styles.peopleContainer}>
-          {people.map((person, index) => (
-            <TouchableOpacity
-              key={index}
-              style={[
-                styles.personButton,
-                selectedPayer === person && styles.selectedPerson
-              ]}
-              onPress={() => setSelectedPayer(person)}
-            >
-              <Text style={styles.personText}>{person}</Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-      </View>
-
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Items</Text>
-        {items.map((item, itemIndex) => (
-          <View key={itemIndex} style={styles.itemContainer}>
-            <Text style={styles.itemName}>{item.name}</Text>
-            <Text style={styles.itemPrice}>${item.price.toFixed(2)}</Text>
-            <View style={styles.assignmentContainer}>
-              {people.map((person, personIndex) => (
-                <TouchableOpacity
-                  key={personIndex}
-                  style={[
-                    styles.assignmentButton,
-                    item.assignedTo.includes(person) && styles.assignedButton
-                  ]}
-                  onPress={() => handleAssignItem(itemIndex, person)}
-                >
-                  <Text style={styles.assignmentText}>{person}</Text>
-                </TouchableOpacity>
-              ))}
+        <Text style={styles.sectionTitle}>Select Receiver</Text>
+        <TextInput
+          style={styles.searchInput}
+          placeholder="Search friends..."
+          value={searchQuery}
+          onChangeText={setSearchQuery}
+          onFocus={() => setIsSearchFocused(true)}
+        />
+        {isSearchFocused && (
+          <ScrollView style={styles.friendsList} nestedScrollEnabled>
+            {filteredFriends.map((friend, index) => (
+              <TouchableOpacity
+                key={index}
+                style={[
+                  styles.friendButton,
+                  receiver === friend && styles.selectedFriend
+                ]}
+                onPress={() => handleSelectReceiver(friend)}
+              >
+                <Text style={styles.friendText}>{friend}</Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        )}
+        {receiver && (
+          <View style={styles.selectedContainer}>
+            <Text style={styles.selectedLabel}>Selected Receiver:</Text>
+            <View style={styles.selectedItem}>
+              <Text style={styles.selectedText}>{receiver}</Text>
+              <TouchableOpacity onPress={() => setReceiver('')}>
+                <Text style={styles.removeButton}>×</Text>
+              </TouchableOpacity>
             </View>
           </View>
-        ))}
+        )}
       </View>
 
-      <TouchableOpacity style={styles.confirmButton} onPress={handleConfirm}>
-        <Text style={styles.confirmButtonText}>Confirm Split</Text>
-      </TouchableOpacity>
+      {receiver && (
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Select Payers</Text>
+          <View style={styles.payersContainer}>
+            {allFriends.map((friend, index) => (
+              <TouchableOpacity
+                key={index}
+                style={[
+                  styles.payerButton,
+                  payers.includes(friend) && styles.selectedPayer
+                ]}
+                onPress={() => handleSelectPayer(friend)}
+              >
+                <Text style={styles.payerText}>{friend}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+          {payers.length > 0 && (
+            <View style={styles.selectedContainer}>
+              <Text style={styles.selectedLabel}>Selected Payers:</Text>
+              <View style={styles.selectedItemsContainer}>
+                {payers.map((payer, index) => (
+                  <View key={index} style={styles.selectedItem}>
+                    <Text style={styles.selectedText}>{payer}</Text>
+                    <TouchableOpacity onPress={() => handleSelectPayer(payer)}>
+                      <Text style={styles.removeButton}>×</Text>
+                    </TouchableOpacity>
+                  </View>
+                ))}
+              </View>
+            </View>
+          )}
+        </View>
+      )}
+
+      {payers.length > 0 && (
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Items</Text>
+          {items.map((item, itemIndex) => (
+            <View key={itemIndex} style={styles.itemContainer}>
+              <Text style={styles.itemName}>{item.name}</Text>
+              <Text style={styles.itemPrice}>${item.price.toFixed(2)}</Text>
+              <View style={styles.assignmentContainer}>
+                {payers.map((payer, payerIndex) => (
+                  <TouchableOpacity
+                    key={payerIndex}
+                    style={[
+                      styles.assignmentButton,
+                      item.payers.includes(payer) && styles.assignedButton
+                    ]}
+                    onPress={() => handleAssignItem(itemIndex, payer)}
+                  >
+                    <Text style={styles.assignmentText}>{payer}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>
+          ))}
+        </View>
+      )}
+
+      {receiver && payers.length > 0 && (
+        <TouchableOpacity style={styles.confirmButton} onPress={handleConfirm}>
+          <Text style={styles.confirmButtonText}>Confirm Split</Text>
+        </TouchableOpacity>
+      )}
     </ScrollView>
   );
 };
@@ -101,6 +261,40 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#fff',
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#fff',
+  },
+  loadingText: {
+    marginTop: 20,
+    fontSize: 16,
+    color: '#666',
+  },
+  errorContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+    backgroundColor: '#fff',
+  },
+  errorText: {
+    fontSize: 16,
+    color: '#FF6B6B',
+    textAlign: 'center',
+    marginBottom: 20,
+  },
+  retryButton: {
+    backgroundColor: '#FF6B6B',
+    padding: 15,
+    borderRadius: 10,
+  },
+  retryButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: 'bold',
   },
   image: {
     width: '100%',
@@ -118,20 +312,76 @@ const styles = StyleSheet.create({
     marginBottom: 10,
     color: '#333',
   },
-  peopleContainer: {
+  searchInput: {
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 5,
+    padding: 10,
+    marginBottom: 10,
+  },
+  friendsList: {
+    maxHeight: 200,
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 5,
+    marginBottom: 10,
+  },
+  friendButton: {
+    padding: 10,
+    borderRadius: 5,
+    backgroundColor: '#f0f0f0',
+    marginBottom: 5,
+  },
+  selectedFriend: {
+    backgroundColor: '#FF6B6B',
+  },
+  friendText: {
+    color: '#333',
+  },
+  selectedContainer: {
+    marginTop: 10,
+  },
+  selectedLabel: {
+    fontSize: 16,
+    color: '#666',
+    marginBottom: 5,
+  },
+  selectedItemsContainer: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 10,
   },
-  personButton: {
+  selectedItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#f8f8f8',
+    padding: 8,
+    borderRadius: 5,
+    marginBottom: 5,
+  },
+  selectedText: {
+    color: '#333',
+    marginRight: 8,
+  },
+  removeButton: {
+    color: '#FF6B6B',
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+  payersContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+  },
+  payerButton: {
     padding: 10,
     borderRadius: 5,
     backgroundColor: '#f0f0f0',
   },
-  selectedPerson: {
-    backgroundColor: '#FF0000',
+  selectedPayer: {
+    backgroundColor: '#FF6B6B',
   },
-  personText: {
+  payerText: {
     color: '#333',
   },
   itemContainer: {
@@ -158,7 +408,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#f0f0f0',
   },
   assignedButton: {
-    backgroundColor: '#FF0000',
+    backgroundColor: '#FF6B6B',
   },
   assignmentText: {
     color: '#333',
@@ -174,10 +424,6 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     fontSize: 18,
     fontWeight: 'bold',
-  },
-  backButton: {
-    backgroundColor: '#FF6B6B',
-    padding: 15,
   },
 });
 
